@@ -4,6 +4,9 @@
 #include <BLEUtils.h>
 #include <BLE2902.h>
 
+#include<string.h>
+
+
 BLEServer *pServer = NULL;
 BLECharacteristic * pRxCharacteristic;
 bool deviceConnected = false;
@@ -12,13 +15,15 @@ uint8_t txValue = 0;
 
 // See the following for generating UUIDs:
 // https://www.uuidgenerator.net/
+#define uS_TO_S_FACTOR 1000000  /* Conversion factor for micro seconds to seconds */
+#define TIME_TO_SLEEP  5        /* Time ESP32 will go to sleep (in seconds) */
 
 #define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E" // UART service UUID
 #define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
 #define CHARACTERISTIC_UUID_TX "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
 bool dataDump = false;
-uint8_t data[] = "This is my entire data string this could be of any lenght let see what happens";
+uint8_t data[] = "This is my entire data string this could be of any lenght let see what happens. This is my entire data string this could be of any lenght let see what happens. This is my entire data string this could be of any lenght let see what happens. This is my entire data string this could be of any lenght let see what happens. This is my entire data string this could be of any lenght let see what happens. This is my entire data string this could be of any lenght let see what happens";
 byte pIndex = 0;
 
 class MyServerCallbacks: public BLEServerCallbacks {
@@ -34,16 +39,30 @@ class MyServerCallbacks: public BLEServerCallbacks {
 class MyCallbacks: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pCharacteristic) {
       std::string rxValue = pCharacteristic->getValue();
-
+      std::string dumpStr ("dump");
+      std::string sleepStr ("sleep");
+      
       if (rxValue.length() > 0) {
         Serial.println("*********");
         Serial.print("Received Value: ");
-        for (int i = 0; i < rxValue.length(); i++)
-          Serial.print(rxValue[i]);
-
+        // for (int i = 0; i < rxValue.length(); i++)
+        //   Serial.print(rxValue[i]);
+        Serial.println(rxValue.c_str());
         Serial.println();
         Serial.println("*********");
-        dataDump = true;
+
+        if(rxValue.compare(dumpStr) == 0){
+          Serial.println("Dump data");
+          dataDump = true;
+        }
+        else if (rxValue.compare(sleepStr) == 0){
+             Serial.println("Night night");
+             esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_SLOW_MEM, ESP_PD_OPTION_OFF);
+             esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_FAST_MEM, ESP_PD_OPTION_OFF);
+             esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_OFF);
+             esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
+             esp_deep_sleep_start();
+        }
       }
     }
 };
@@ -51,6 +70,9 @@ class MyCallbacks: public BLECharacteristicCallbacks {
 
 void setup() {
   Serial.begin(9600);
+
+  esp_sleep_wakeup_cause_t wakeup_reason;
+  wakeup_reason = esp_sleep_get_wakeup_cause();
 
   // Create the BLE Device
   BLEDevice::init("UART Service");
