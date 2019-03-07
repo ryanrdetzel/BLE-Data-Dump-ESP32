@@ -75,7 +75,7 @@ void setup() {
   wakeup_reason = esp_sleep_get_wakeup_cause();
 
   // Create the BLE Device
-  BLEDevice::init("UART Service");
+  BLEDevice::init("BLEDU");
 
   // Create the BLE Server
   pServer = BLEDevice::createServer();
@@ -105,6 +105,8 @@ void setup() {
   pService->start();
 
   // Start advertising
+  //pServer->getAdvertising()->addServiceUUID(SERVICE_UUID); 
+  pServer->getAdvertising()->addServiceUUID(pService->getUUID());
   pServer->getAdvertising()->start();
   Serial.println("Waiting a client connection to notify...");
 }
