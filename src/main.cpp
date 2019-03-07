@@ -53,7 +53,7 @@ void setup() {
   Serial.begin(9600);
 
   // Create the BLE Device
-  BLEDevice::init("UART Service");
+  BLEDevice::init("BLEDU");
 
   // Create the BLE Server
   pServer = BLEDevice::createServer();
@@ -83,6 +83,8 @@ void setup() {
   pService->start();
 
   // Start advertising
+  //pServer->getAdvertising()->addServiceUUID(SERVICE_UUID); 
+  pServer->getAdvertising()->addServiceUUID(pService->getUUID());
   pServer->getAdvertising()->start();
   Serial.println("Waiting a client connection to notify...");
 }
