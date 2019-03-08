@@ -31,6 +31,17 @@ class MyServerCallbacks: public BLEServerCallbacks {
     }
 };
 
+class MyCallbacks2: public BLECharacteristicCallbacks {
+	void onRead(BLECharacteristic *pCharacteristic) {
+		struct timeval tv;
+		gettimeofday(&tv, nullptr);
+		std::ostringstream os;
+		os << "Time: " << tv.tv_sec;
+		pCharacteristic->setValue(os.str());
+	}
+};
+
+
 class MyCallbacks: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pCharacteristic) {
       std::string rxValue = pCharacteristic->getValue();
@@ -63,19 +74,12 @@ void setup() {
   BLEService *pService = pServer->createService(SERVICE_UUID);
 
   // Create a BLE Characteristic
-  // pTxCharacteristic = pService->createCharacteristic(
-	// 									CHARACTERISTIC_UUID_TX,
-	// 									BLECharacteristic::PROPERTY_NOTIFY
-	// 								);
+  pTxCharacteristic = pService->createCharacteristic(CHARACTERISTIC_UUID_TX, BLECharacteristic::PROPERTY_READ);
+  pTxCharacteristic->setCallbacks(new MyCallbacks2());
                       
-  //pTxCharacteristic->addDescriptor(new BLE2902());
+//   pTxCharacteristic->addDescriptor(new BLE2902());
 
-  pRxCharacteristic = pService->createCharacteristic(
-											 CHARACTERISTIC_UUID_RX,
-											BLECharacteristic::PROPERTY_WRITE | 
-                      BLECharacteristic::PROPERTY_NOTIFY
-										);
-
+  pRxCharacteristic = pService->createCharacteristic(HARACTERISTIC_UUID_RX, BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_NOTIFY);
   pRxCharacteristic->setCallbacks(new MyCallbacks());
   //pRxCharacteristic->addDescriptor(new BLE2902());
 
