@@ -3,30 +3,33 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
+#include <Wire.h> 
 
-#include<string.h>
+#include <string.h>
 
+#define eeprom 0x50
 
 BLEServer *pServer = NULL;
-BLECharacteristic * pRxCharacteristic;
+BLECharacteristic * pNotifyCharacteristic;
+BLECharacteristic * pReadCharacteristic;
+
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
-uint8_t txValue = 0;
 
-// See the following for generating UUIDs:
-// https://www.uuidgenerator.net/
 #define uS_TO_S_FACTOR 1000000  /* Conversion factor for micro seconds to seconds */
 #define TIME_TO_SLEEP  5        /* Time ESP32 will go to sleep (in seconds) */
 
-#define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E" // UART service UUID
-#define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
-#define CHARACTERISTIC_UUID_TX "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
+#define SERVICE_UUID                "fdc59e94-27d1-4576-94c6-404b459c11ff" // UART service UUID
+#define CHARACTERISTIC_UUID_READ    "fdc59e94-27d2-4576-94c6-404b459c11ff"
+#define CHARACTERISTIC_UUID_NOTIFY  "fdc59e94-27d3-4576-94c6-404b459c11ff"
 
 bool dataDump = false;
-uint8_t data[] = "This is my entire data string this could be of any lenght let see what happens. This is my entire data string this could be of any lenght let see what happens. This is my entire data string this could be of any lenght let see what happens. This is my entire data string this could be of any lenght let see what happens. This is my entire data string this could be of any lenght let see what happens. This is my entire data string this could be of any lenght let see what happens";
-byte pIndex = 0;
+uint16_t dataSize = 0;
 
-class MyServerCallbacks: public BLEServerCallbacks {
+int pIndex = 0;
+int address = 0;
+
+class MainServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
       deviceConnected = true;
     };
@@ -36,34 +39,25 @@ class MyServerCallbacks: public BLEServerCallbacks {
     }
 };
 
-class MyCallbacks2: public BLECharacteristicCallbacks {
+class ReadCallback: public BLECharacteristicCallbacks {
 	void onRead(BLECharacteristic *pCharacteristic) {
-		struct timeval tv;
-		gettimeofday(&tv, nullptr);
-		std::ostringstream os;
-		os << "Time: " << tv.tv_sec;
-		pCharacteristic->setValue(os.str());
+    Serial.println("Got read ");
 	}
 };
 
-
-class MyCallbacks: public BLECharacteristicCallbacks {
+class NotifyCallback: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pCharacteristic) {
       std::string rxValue = pCharacteristic->getValue();
-      std::string dumpStr ("dump");
-      std::string sleepStr ("sleep");
+
+      std::string dumpStr ("d");
+      std::string sleepStr ("s");
       
       if (rxValue.length() > 0) {
-        Serial.println("*********");
         Serial.print("Received Value: ");
-        // for (int i = 0; i < rxValue.length(); i++)
-        //   Serial.print(rxValue[i]);
         Serial.println(rxValue.c_str());
-        Serial.println();
-        Serial.println("*********");
 
-        if(rxValue.compare(dumpStr) == 0){
-          Serial.println("Dump data");
+        if (rxValue.compare(dumpStr) == 0){
+          Serial.println("Dump data command");
           dataDump = true;
         }
         else if (rxValue.compare(sleepStr) == 0){
@@ -78,87 +72,152 @@ class MyCallbacks: public BLECharacteristicCallbacks {
     }
 };
 
+void writeEEPROMPage(int deviceaddress, unsigned int eeaddress, int *data ) {
+  Wire.beginTransmission(deviceaddress);
+  Wire.write((uint8_t)(eeaddress >> 8));    // MSB 
+  Wire.write((uint8_t)(eeaddress & 0xFF)); // LSB 
+
+  for (int i=0;i<64;i++){
+    Wire.write(data[i]);
+  }
+  Wire.endTransmission();
+  delay(10);
+}
+
+void writeEEPROM(int deviceaddress, unsigned int eeaddress, int data ) 
+{
+  Wire.beginTransmission(deviceaddress);
+  Wire.write((uint8_t)(eeaddress >> 8));    // MSB 
+  Wire.write((uint8_t)(eeaddress & 0xFF)); // LSB 
+  Wire.write(data);
+  Wire.endTransmission();
+  delay(10);
+}
+ 
+uint8_t readEEPROM(int deviceaddress, unsigned int  eeaddress ) 
+{
+  uint8_t rdata = 0x00;
+ 
+  Wire.beginTransmission(deviceaddress);
+  Wire.write((uint8_t)(eeaddress >> 8));    // MSB 
+  Wire.write((uint8_t)(eeaddress & 0xFF)); // LSB 
+  Wire.endTransmission();
+  Wire.requestFrom(deviceaddress, 1);
+ 
+  while (Wire.available()){
+    rdata = Wire.read();
+  }
+ 
+  return rdata;
+}
+
+void writeDummyData(){
+  Serial.println("Starting write");
+
+  int charStart = 48;
+  int data[64];
+  for (int x=0;x<64;x++){
+    data[x] = charStart++;
+    if (charStart >= 122) charStart = 48;
+  }
+
+  for (int x=0;x<512;x++){
+    writeEEPROMPage(eeprom, address+(x*64), data);
+  }
+}
 
 void setup() {
   Serial.begin(9600);
+  Serial.println("Starting up");
 
-  esp_sleep_wakeup_cause_t wakeup_reason;
-  wakeup_reason = esp_sleep_get_wakeup_cause();
+  Wire.begin(); //creates a Wire object
+  //writeDummyData();
 
   // Create the BLE Device
   BLEDevice::init("BLEDU");
 
+  dataSize = 32768 ; // Full size of external eeprom
+
   // Create the BLE Server
   pServer = BLEDevice::createServer();
-  pServer->setCallbacks(new MyServerCallbacks());
+  pServer->setCallbacks(new MainServerCallbacks());
 
   // Create the BLE Service
   BLEService *pService = pServer->createService(SERVICE_UUID);
 
   // Create a BLE Characteristic
-  pTxCharacteristic = pService->createCharacteristic(CHARACTERISTIC_UUID_TX, BLECharacteristic::PROPERTY_READ);
-  pTxCharacteristic->setCallbacks(new MyCallbacks2());
-                      
-//   pTxCharacteristic->addDescriptor(new BLE2902());
+  pReadCharacteristic = pService->createCharacteristic(CHARACTERISTIC_UUID_READ, BLECharacteristic::PROPERTY_READ);
+  pReadCharacteristic->setCallbacks(new ReadCallback());
+  pReadCharacteristic->setValue(dataSize); // This should changed when new data is saved.
 
-  pRxCharacteristic = pService->createCharacteristic(HARACTERISTIC_UUID_RX, BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_NOTIFY);
-  pRxCharacteristic->setCallbacks(new MyCallbacks());
-  //pRxCharacteristic->addDescriptor(new BLE2902());
+  pNotifyCharacteristic = pService->createCharacteristic(CHARACTERISTIC_UUID_NOTIFY, BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_NOTIFY);
+  pNotifyCharacteristic->setCallbacks(new NotifyCallback());
 
   // Start the service
   pService->start();
 
-  // Start advertising
+  // Start advertising the service too.
   pServer->getAdvertising()->addServiceUUID(SERVICE_UUID); 
-  //pServer->getAdvertising()->addServiceUUID(pService->getUUID());
   pServer->getAdvertising()->start();
+
   Serial.println("Waiting a client connection to notify...");
 }
 
-void loop() {
+/* Reads bytes from disk and into buffer */
+void bytesFromDisk(uint8_t *buffer, int bufferSize){
+  for (int x=0;x<bufferSize;x++){
+    byte b = readEEPROM(eeprom, address + pIndex);
+    buffer[x] = b;
+    pIndex++;
+  }
+}
 
-  if (dataDump){
-    // Get real buffer size based off what's left in data to send.
-      byte buffer_size = 20;
-      uint8_t buffer[buffer_size];
-  
-      // Load in the next buffer of bytes
-      for (int i=0;i<buffer_size;i++){
-        if (pIndex+i < sizeof(data)){
-          buffer[i] = data[pIndex+i];
-        }else{
-          buffer[i] = 0;
-        }
-      }
-  
-      pIndex += buffer_size;
-      if (pIndex >= sizeof(data)){
-        pIndex = 0;
-        dataDump = false;
-      }
-      
-      Serial.println((char*)buffer);
-      
-      if (deviceConnected) {
-          pRxCharacteristic->setValue(buffer, buffer_size);
-          pRxCharacteristic->notify();
-          txValue++;
-    		delay(10); // bluetooth stack will go into congestion, if too many packets are sent
-    	}
-  
-      delay(1000);
+void loop() {
+  if (dataDump == true){
+    // Default 20 byte buffer
+    int buffer_size = 20;
+    if (address + pIndex + buffer_size >= dataSize){
+      // Don't have a full buffer left.
+      int diff = (address + pIndex + buffer_size) - dataSize;
+      buffer_size -= diff;
     }
+
+    uint8_t buffer[buffer_size];
+
+    // Measure how long the read takes so we can alter the delay we use
+    unsigned long StartTime = millis();
+
+    bytesFromDisk(buffer, buffer_size);
+
+    unsigned long CurrentTime = millis();
+    unsigned long ElapsedTime = CurrentTime - StartTime;
+
+    if (pIndex >= dataSize){
+      Serial.println("All data sent.");
+      pIndex = 0;
+      dataDump = false;
+    }
+      
+    if (deviceConnected) {
+        pNotifyCharacteristic->setValue(buffer, buffer_size);
+        pNotifyCharacteristic->notify();
+    }
+
+    // BLE stack needs a break
+    int tdiff = 10 - ElapsedTime;
+    if (tdiff > 0) delay(tdiff);
+  }
     
     // disconnecting
     if (!deviceConnected && oldDeviceConnected) {
         delay(500); // give the bluetooth stack the chance to get things ready
         pServer->startAdvertising(); // restart advertising
-        Serial.println("start advertising");
+        Serial.println("Start advertising");
         oldDeviceConnected = deviceConnected;
     }
+
     // connecting
     if (deviceConnected && !oldDeviceConnected) {
-		// do stuff here on connecting
         oldDeviceConnected = deviceConnected;
     }
 }
